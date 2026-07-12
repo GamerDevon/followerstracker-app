@@ -2,9 +2,10 @@ name: Automatický Sledovač Změn do Supabase
 
 on:
   schedule:
-    # Automatically triggers every 15 minutes, 24/7
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # Keeps manual execution open if you ever want to trigger it from the UI
+    # This CRON expression tells GitHub to run this script automatically every 30 minutes, 24/7.
+    # (30 minutes is the sweet spot to save free API credits while keeping data fresh!)
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # This allows you to still click "Run workflow" manually whenever you want to test it.
 
 jobs:
   scrape-followers:
@@ -26,4 +27,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: python tracker.py
