@@ -1,162 +1,180 @@
 import datetime
 import os
 import sys
+import threading
 import requests
+import tkinter as tk
+from tkinter import messagebox
 from supabase import Client, create_client
-
-# Terminal styling escape codes
-GREEN = "\033[92m"
-RED = "\033[91m"
-GRAY = "\033[90m"
-RESET = "\033[0m"
-
-SUPABASE_URL = None
-SUPABASE_KEY = None
-APIFY_TOKEN = None
-
-# 1. TRY TO READ LOCAL CONFIG FILE (For when you run the .exe on your PC)
-config_path = "config.txt"
-if os.path.exists(config_path):
-    print("Found config.txt file. Loading local API keys...")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            for line in lines:
-                if "=" in line:
-                    key, value = line.strip().split("=", 1)
-                    if key.strip() == "SUPABASE_URL":
-                        SUPABASE_URL = value.strip()
-                    elif key.strip() == "SUPABASE_KEY":
-                        SUPABASE_KEY = value.strip()
-                    elif key.strip() == "APIFY_TOKEN":
-                        APIFY_TOKEN = value.strip()
-    except Exception as e:
-        print(f"Error reading config.txt: {e}")
-
-# 2. FALLBACK TO ENVIRONMENT VARIABLES (For when GitHub Actions runs it)
-if not SUPABASE_URL or not SUPABASE_KEY or not APIFY_TOKEN:
-    SUPABASE_URL = os.environ.get("SUPABASE_URL")
-    SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-    APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 
 # Target page canonical identifier (Hand-made MisKho)
 FACEBOOK_PAGE = "https://www.facebook.com/100064601383155"
 
-if not SUPABASE_URL or not SUPABASE_KEY or not APIFY_TOKEN:
-    print("\nERROR: Missing configuration API keys!")
-    print("If running locally, ensure 'config.txt' exists next to this .exe with your credentials.")
-    if len(sys.argv) > 1 or getattr(sys.modules[__name__], '__file__', None) is None:
-        input("\nPress Enter to exit...")
-    sys.exit(1)
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-def get_last_count():
-    try:
-        response = (
-            supabase.table("facebook_tracker")
-            .select("sledujici")
-            .order("id", desc=True)
-            .limit(1)
-            .execute()
-        )
-        if response.data and len(response.data) > 0:
-            return int(response.data[0]["sledujici"])
-    except Exception as e:
-        print(f"DEBUG: Could not read previous database row: {e}")
-    return None
-
-
-def get_count_from_apify():
-    run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
-    
-    payload = {
-        "startUrls": [{"url": FACEBOOK_PAGE}],
-        "proxyConfiguration": {
-            "useApifyProxy": True,
-            "apifyProxyGroups": ["RESIDENTIAL"]
-        }
-    }
-
-    try:
-        print("Contacting Apify cloud platform using structured startUrls payload...")
-        res = requests.post(run_url, json=payload, timeout=60)
+class TrackerGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Facebook Follower Tracker")
+        self.root.geometry("450x300")
+        self.root.configure(bg="#1e1e1e") # Dark mode background
         
-        if res.status_code in [200, 201]:
-            data = res.json()
-            if data and len(data) > 0:
-                first_item = data[0]
-                
-                if "error" in first_item or "errorDescription" in first_item:
-                    print(f"DEBUG: Internal scraper error caught: {first_item.get('errorDescription')}")
-                    return None
+        # Title Label
+        self.title_label = tk.Label(
+            root, text="Hand-made MisKho Tracker", 
+            font=("Arial", 16, "bold"), fg="#ffffff", bg="#1e1e1e"
+        )
+        self.title_label.pack(pady=15)
+        
+        # Follower Count Display
+        self.count_label = tk.Label(
+            root, text="Sledující: ---", 
+            font=("Arial", 24, "bold"), fg="#a0a0a0", bg="#1e1e1e"
+        )
+        self.count_label.pack(pady=10)
+        
+        # Status / Change Label
+        self.status_label = tk.Label(
+            root, text="Načítání konfigurace...", 
+            font=("Arial", 12, "italic"), fg="#a0a0a0", bg="#1e1e1e"
+        )
+        self.status_label.pack(pady=5)
+        
+        # Action Button
+        self.refresh_btn = tk.Label(root) # Placeholder to avoid reference errors
+        self.refresh_btn = tk.Button(
+            root, text="Zkontrolovat Změnu", font=("Arial", 11, "bold"),
+            fg="#ffffff", bg="#0066cc", activebackground="#0052a3", activeforeground="#ffffff",
+            padx=10, pady=5, command=self.start_check_thread
+        )
+        self.refresh_btn.pack(pady=20)
 
-                followers = (
-                    first_item.get("followersCount") or 
-                    first_item.get("followers") or 
-                    first_item.get("likesCount") or 
-                    first_item.get("likes")
-                )
-                
-                if followers is not None:
-                    return int(followers)
-                else:
-                    print(f"DEBUG: Counter keys missing. Keys: {list(first_item.keys())}")
+        # Initialize API configurations safely
+        self.setup_credentials()
+
+    def setup_credentials(self):
+        self.supabase_url = None
+        self.supabase_key = None
+        self.apify_token = None
+
+        # Try to read local config file (For running as .exe locally)
+        config_path = "config.txt"
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if "=" in line:
+                            key, value = line.strip().split("=", 1)
+                            if key.strip() == "SUPABASE_URL":
+                                self.supabase_url = value.strip()
+                            elif key.strip() == "SUPABASE_KEY":
+                                self.supabase_key = value.strip()
+                            elif key.strip() == "APIFY_TOKEN":
+                                self.apify_token = value.strip()
+            except Exception as e:
+                self.update_status(f"Chyba souboru config.txt: {e}", "#ff3333")
+                return
+
+        # Fallback to Environment Variables (For GitHub Actions compiler test runs)
+        if not self.supabase_url or not self.supabase_key or not self.apify_token:
+            self.supabase_url = os.environ.get("SUPABASE_URL")
+            self.supabase_key = os.environ.get("SUPABASE_KEY")
+            self.apify_token = os.environ.get("APIFY_TOKEN")
+
+        if not self.supabase_url or not self.supabase_key or not self.apify_token:
+            self.count_label.config(text="CHYBA", fg="#ff3333")
+            self.update_status("Chybí config.txt s API klíči!", "#ff3333")
+            self.refresh_btn.config(state=tk.DISABLED)
+        else:
+            self.update_status("Připraven ke kontrole", "#a0a0a0")
+            # Auto-run the first check when opened successfully
+            self.start_check_thread()
+
+    def update_status(self, text, color):
+        self.status_label.config(text=text, fg=color)
+
+    def start_check_thread(self):
+        """Runs the scraper in a separate thread so the window visual doesn't freeze."""
+        self.refresh_btn.config(state=tk.DISABLED, text="Kontrola...")
+        self.update_status("Stahování dat z Facebooku...", "#3399ff")
+        threading.Thread(target=self.check_followers_logic, daemon=True).start()
+
+    def get_last_count(self, client):
+        try:
+            response = client.table("facebook_tracker").select("sledujici").order("id", desc=True).limit(1).execute()
+            if response.data and len(response.data) > 0:
+                return int(response.data[0]["sledujici"])
+        except Exception as e:
+            print(f"DEBUG Error: {e}")
+        return None
+
+    def get_count_from_apify(self):
+        run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={self.apify_token}"
+        payload = {
+            "startUrls": [{"url": FACEBOOK_PAGE}],
+            "proxyConfiguration": {"useApifyProxy": True, "apifyProxyGroups": ["RESIDENTIAL"]}
+        }
+        try:
+            res = requests.post(run_url, json=payload, timeout=60)
+            if res.status_code in [200, 201]:
+                data = res.json()
+                if data and len(data) > 0:
+                    first_item = data[0]
+                    if "error" not in first_item:
+                        followers = first_item.get("followersCount") or first_item.get("followers") or first_item.get("likesCount") or first_item.get("likes")
+                        if followers is not None:
+                            return int(followers)
+        except Exception:
+            pass
+        return None
+
+    def check_followers_logic(self):
+        current_followers = self.get_count_from_apify()
+        
+        if current_followers is None or current_followers == 0:
+            self.root.after(0, lambda: self.count_label.config(text="CHYBA", fg="#ff3333"))
+            self.root.after(0, lambda: self.update_status("Načítání z Apify selhalo.", "#ff3333"))
+            self.root.after(0, lambda: self.refresh_btn.config(state=tk.NORMAL, text="Zkontrolovat Změnu"))
+            return
+
+        # Update visual main number immediately
+        self.root.after(0, lambda: self.count_label.config(text=f"Sledující: {current_followers}", fg="#ffffff"))
+        
+        try:
+            supabase_client = create_client(self.supabase_url, self.supabase_key)
+            last_count = self.get_last_count(supabase_client)
+        except Exception as e:
+            self.root.after(0, lambda: self.update_status("Chyba připojení k Supabase.", "#ff3333"))
+            self.root.after(0, lambda: self.refresh_btn.config(state=tk.NORMAL, text="Zkontrolovat Změnu"))
+            return
+
+        current_date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+
+        if last_count is not None and current_followers == last_count:
+            self.root.after(0, lambda: self.update_status(f"Bez změny (Zůstává {current_followers})", "#a0a0a0"))
+        else:
+            if last_count is None:
+                change_text = "První měření"
+                status_color = "#a0a0a0"
             else:
-                print("DEBUG: Apify returned an empty dataset collection.")
-        else:
-            print(f"DEBUG: Apify API transactional issue. Status: {res.status_code}")
-    except Exception as e:
-        print(f"DEBUG: Connection error during Apify API transaction: {e}")
-    return None
+                difference = current_followers - last_count
+                if difference > 0:
+                    change_text = f"+{difference} (Nárůst)"
+                    status_color = "#33cc66" # Green for higher
+                else:
+                    change_text = f"{difference} (Pokles)"
+                    status_color = "#ff3333" # Red for lower
 
+            new_row = {"datum": current_date, "sledujici": current_followers, "zmena": change_text}
+            
+            try:
+                supabase_client.table("facebook_tracker").insert(new_row).execute()
+                self.root.after(0, lambda: self.update_status(f"Změna uložena: {change_text}", status_color))
+            except Exception:
+                self.root.after(0, lambda: self.update_status("Zápis do Supabase selhal.", "#ff3333"))
 
-def track_followers():
-    print("Initiating cloud extraction from Facebook page...")
-    current_followers = get_count_from_apify()
-
-    if current_followers is None or current_followers == 0:
-        print("ERROR: Cloud retrieval failed or execution credit exhausted. Aborting.")
-        return
-
-    last_count = get_last_count()
-
-    if last_count is not None and current_followers == last_count:
-        print(f"{GRAY}No change detected. Followers remain at {current_followers}. Database update skipped.{RESET}")
-        return
-
-    current_date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
-
-    if last_count is None:
-        change_text = "První měření"
-        log_display = f"{GRAY}{change_text}{RESET}"
-    else:
-        difference = current_followers - last_count
-        if difference > 0:
-            change_text = f"+{difference} (Nárůst)"
-            log_display = f"{GREEN}{change_text}{RESET}"
-        else:
-            change_text = f"{difference} (Pokles)"
-            log_display = f"{RED}{change_text}{RESET}"
-
-    new_row = {
-        "datum": current_date,
-        "sledujici": current_followers,
-        "zmena": change_text,
-    }
-
-    try:
-        print(f"Change detected! Status: {log_display}. Sending payload to Supabase...")
-        supabase.table("facebook_tracker").insert(new_row).execute()
-        print(f"Success! Updated count ({current_followers}) committed to database.")
-    except Exception as e:
-        print(f"Database insertion failed: {e}")
+        self.root.after(0, lambda: self.refresh_btn.config(state=tk.NORMAL, text="Zkontrolovat Změnu"))
 
 
 if __name__ == "__main__":
-    track_followers()
-    # Safely pauses terminal open window only if run manually as a compiled application window
-    if len(sys.argv) == 1 and getattr(sys.frozen, 'False', False):
-        print("\n" + "="*40)
-        input("Execution complete. Press Enter to close...")
+    root = tk.Tk()
+    app = TrackerGUI(root)
+    root.mainloop()
