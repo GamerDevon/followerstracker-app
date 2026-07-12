@@ -12,15 +12,16 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def ziskej_posledni_pocet():
     try:
+        # OPRAVENO: Použito 'desc=True' namísto 'descending=True'
         odpoved = (
             supabase.table("facebook_tracker")
             .select("sledujici")
-            .order("id", descending=True)
+            .order("id", desc=True)
             .limit(1)
             .execute()
         )
-        if odpoved.data:
-            # Oprava: Přístup k datům v seznamu (předchozí zápis mohl vyhodit chybu indexu)
+        # Výsledek je seznam slovníků: odpoved.data = [{'sledujici': 758}]
+        if odpoved.data and len(odpoved.data) > 0:
             return int(odpoved.data[0]["sledujici"])
     except Exception as e:
         print(f"DEBUG: Nepodařilo se načíst předchozí data: {e}")
@@ -41,7 +42,6 @@ def track_followers():
         response = requests.get(url, headers=headers, timeout=15)
         html_content = response.text
 
-        # Hledání přesného JSON klíče pro sledující v moderním kódu Facebooku (2026)
         follower_meta = re.search(
             r'"follower_count":\s*(\d+)', html_content
         ) or re.search(r'"subscriber_count":\s*(\d+)', html_content)
@@ -52,7 +52,6 @@ def track_followers():
                 f"DEBUG: Úspěšně nalezen počet SLEDUJÍCÍCH z metadat: {aktualni_sledujici}"
             )
         else:
-            # Záložní metoda: Hledání textu "sledujících" přímo v HTML kódu
             text_match = re.search(
                 r'([\d\s\xa0]+)\s*(?:sledujících|sleduje|followers)',
                 html_content,
@@ -68,7 +67,6 @@ def track_followers():
                         f"DEBUG: Nalezeno přes záložní text: {aktualni_sledujici}"
                     )
 
-        # Bezpečnostní pojistka s nejnovějším číslem 758, pokud cloudový přístup selže
         if aktualni_sledujici is None or aktualni_sledujici == 0:
             print(
                 "DEBUG: Facebook omezil přístup, aplikuji aktuální základnu 758 sledujících."
@@ -77,7 +75,6 @@ def track_followers():
 
         dnesni_datum = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-        # Výpočet změny oproti předchozímu řádku v Supabase
         posledni_pocet = ziskej_posledni_pocet()
         if posledni_pocet is None:
             rozdil_text = "První měření"
