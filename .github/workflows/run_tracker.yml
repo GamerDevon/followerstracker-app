@@ -2,8 +2,8 @@ name: Každominutový Sledovač do Supabase
 
 on:
   schedule:
-    - cron: '* * * * *' # Spouští se každou minutu (s limity GitHubu cca 3-7 minut)
-  workflow_dispatch: # Tlačítko pro ruční spuštění
+    - cron: '* * * * *'
+  workflow_dispatch:
 
 jobs:
   scrape-followers:
@@ -17,14 +17,9 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Nainstalovat Google Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-
       - name: Nainstalovat knihovny
         run: |
-          pip install selenium webdriver-manager supabase
+          pip install requests supabase
 
       - name: Spustit skript
         env:
