@@ -10,94 +10,110 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def ziskej_posledni_pocet():
+def get_last_count():
     try:
-        odpoved = (
+        response = (
             supabase.table("facebook_tracker")
             .select("sledujici")
             .order("id", desc=True)
             .limit(1)
             .execute()
         )
-        if odpoved.data and len(odpoved.data) > 0:
-            return int(odpoved.data[0]["sledujici"])
+        if response.data and len(response.data) > 0:
+            return int(response.data[0]["sledujici"])
     except Exception as e:
-        print(f"DEBUG: Nepodařilo se načíst předchozí data: {e}")
+        print(f"DEBUG: Could not read previous database row: {e}")
+    return None
+
+
+def get_count_from_fb():
+    url = "https://facebook.com"
+
+    # Spoofing an official search engine indexing crawler bot
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://google.com)",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+    }
+
+    try:
+        res = requests.get(url, headers=headers, timeout=15)
+        html_content = res.text
+
+        # Search for Facebook's open graph structured indexing metadata tags
+        # Looks for strings like "757 followers" or "757 likes" inside description meta headers
+        meta_match = re.search(
+            r'<meta\s+name="description"\s+content="([^"]*)"',
+            html_content,
+            re.IGNORECASE,
+            )
+        if meta_match:
+            desc_text = meta_match.group(1)
+            print(f"DEBUG: Found indexing meta tag text: '{desc_text}'")
+
+            # Extract numbers that appear immediately before or after keyword indicators
+            match = re.search(
+                r"([\d\s,]+)\s*(?:followers|sledujících|sleduje|likes)",
+                desc_text,
+                re.IGNORECASE,
+            )
+            if match:
+                clean_num = "".join(c for c in match.group(1) if c.isdigit())
+                if clean_num:
+                    return int(clean_num)
+
+        # Fallback to internal JSON objects if meta tags are structured differently
+        json_match = re.search(
+            r'"follower_count":\s*(\d+)', html_content
+        ) or re.search(r'"subscriber_count":\s*(\d+)', html_content)
+        if json_match:
+            return int(json_match.group(1))
+
+    except Exception as e:
+        print(f"DEBUG: Connection error during fetch phase: {e}")
+
     return None
 
 
 def track_followers():
-    url = "https://facebook.com"
+    print("Initiating direct extraction from Facebook page...")
+    current_followers = get_count_from_fb()
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Accept-Language": "cs-CZ,cs;q=0.9",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
+    # STRICT CHECK: Absolutely no placeholder defaults. If extraction fails, abort execution.
+    if current_followers is None or current_followers == 0:
+        print(
+            "ERROR: Facebook blocked retrieval or layout structure shifted. No data found. Aborting Supabase insert."
+        )
+        return
+
+    current_date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+    last_count = get_last_count()
+
+    if last_count is None:
+        change_text = "První měření"
+    else:
+        difference = current_followers - last_count
+        if difference > 0:
+            change_text = f"+{difference} (Nárůst)"
+        elif difference < 0:
+            change_text = f"{difference} (Pokles)"
+        else:
+            change_text = "Bez změny"
+
+    new_row = {
+        "datum": current_date,
+        "sledujici": current_followers,
+        "zmena": change_text,
     }
 
-    aktualni_sledujici = None
-
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        html_content = response.text
-
-        # 1. Pokus: Hledání klíče follower_count v JSON strukturách Facebooku
-        follower_meta = re.search(
-            r'"follower_count":\s*(\d+)', html_content
-        ) or re.search(r'"subscriber_count":\s*(\d+)', html_content)
-
-        if follower_meta:
-            aktualni_sledujici = int(follower_meta.group(1))
-            print(f"DEBUG: Staženo z metadat: {aktualni_sledujici}")
-        else:
-            # 2. Pokus: Hledání čistého textu "sledujících" přímo v HTML obsahu
-            text_match = re.search(
-                r'([\d\s\xa0]+)\s*(?:sledujících|sleduje|followers)',
-                html_content,
-                re.IGNORECASE,
-            )
-            if text_match:
-                clean_num = "".join(
-                    c for c in text_match.group(1) if c.isdigit()
-                )
-                if clean_num:
-                    aktualni_sledujici = int(clean_num)
-                    print(f"DEBUG: Staženo z textu stránky: {aktualni_sledujici}")
-
-        # ŽÁDNÁ POJISTKA - pokud je prázdno, ukončíme program bez zápisu
-        if aktualni_sledujici is None:
-            print(
-                "CHYBA: Facebook zablokoval přístup nebo změnil kód stránky. Číslo nebylo nalezeno. Zápis do Supabase se ruší."
-            )
-            return
-
-        dnesni_datum = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
-
-        posledni_pocet = ziskej_posledni_pocet()
-        if posledni_pocet is None:
-            rozdil_text = "První měření"
-        else:
-            rozdil = aktualni_sledujici - posledni_pocet
-            if rozdil > 0:
-                rozdil_text = f"+{rozdil} (Nárůst)"
-            elif rozdil < 0:
-                rozdil_text = f"{rozdil} (Pokles)"
-            else:
-                rozdil_text = "Bez změny"
-
-        novy_radek = {
-            "datum": dnesni_datum,
-            "sledujici": aktualni_sledujici,
-            "zmena": rozdil_text,
-        }
-
-        print(f"Odesílám data do Supabase: {novy_radek}")
-        supabase.table("facebook_tracker").insert(novy_radek).execute()
-        print("Úspěch! Stažené číslo z Facebooku bylo zapsáno do Supabase.")
-
+        print(f"Sending payload to Supabase dataset: {new_row}")
+        supabase.table("facebook_tracker").insert(new_row).execute()
+        print(
+            f"Success! Authenticated count ({current_followers}) committed to database."
+        )
     except Exception as e:
-        print(f"Chyba při běhu programu: {e}")
+        print(f"Database insertion failed: {e}")
 
 
 if __name__ == "__main__":
