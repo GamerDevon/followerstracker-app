@@ -1,5 +1,6 @@
 import datetime
 import os
+import sys
 import requests
 from supabase import Client, create_client
 
@@ -9,19 +10,44 @@ RED = "\033[91m"
 GRAY = "\033[90m"
 RESET = "\033[0m"
 
-# SAFE: Fetching variables from GitHub Environment instead of hardcoding them
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
+SUPABASE_URL = None
+SUPABASE_KEY = None
+APIFY_TOKEN = None
+
+# 1. TRY TO READ LOCAL CONFIG FILE (For when you run the .exe on your PC)
+config_path = "config.txt"
+if os.path.exists(config_path):
+    print("Found config.txt file. Loading local API keys...")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            for line in lines:
+                if "=" in line:
+                    key, value = line.strip().split("=", 1)
+                    if key.strip() == "SUPABASE_URL":
+                        SUPABASE_URL = value.strip()
+                    elif key.strip() == "SUPABASE_KEY":
+                        SUPABASE_KEY = value.strip()
+                    elif key.strip() == "APIFY_TOKEN":
+                        APIFY_TOKEN = value.strip()
+    except Exception as e:
+        print(f"Error reading config.txt: {e}")
+
+# 2. FALLBACK TO ENVIRONMENT VARIABLES (For when GitHub Actions runs it)
+if not SUPABASE_URL or not SUPABASE_KEY or not APIFY_TOKEN:
+    SUPABASE_URL = os.environ.get("SUPABASE_URL")
+    SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+    APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 
 # Target page canonical identifier (Hand-made MisKho)
 FACEBOOK_PAGE = "https://www.facebook.com/100064601383155"
 
-# Safety check to stop execution if secrets weren't added to GitHub settings
 if not SUPABASE_URL or not SUPABASE_KEY or not APIFY_TOKEN:
-    print("ERROR: One or more secret tokens are missing from environment variables!")
-    print("Make sure you added SUPABASE_URL, SUPABASE_KEY, and APIFY_TOKEN to your GitHub Repository Secrets.")
-    exit(1)
+    print("\nERROR: Missing configuration API keys!")
+    print("If running locally, ensure 'config.txt' exists next to this .exe with your credentials.")
+    if len(sys.argv) > 1 or getattr(sys.modules[__name__], '__file__', None) is None:
+        input("\nPress Enter to exit...")
+    sys.exit(1)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -130,3 +156,7 @@ def track_followers():
 
 if __name__ == "__main__":
     track_followers()
+    # Safely pauses terminal open window only if run manually as a compiled application window
+    if len(sys.argv) == 1 and getattr(sys.frozen, 'False', False):
+        print("\n" + "="*40)
+        input("Execution complete. Press Enter to close...")
