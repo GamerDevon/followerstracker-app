@@ -12,7 +12,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def ziskej_posledni_pocet():
     try:
-        # OPRAVENO: Použito 'desc=True' namísto 'descending=True'
         odpoved = (
             supabase.table("facebook_tracker")
             .select("sledujici")
@@ -20,7 +19,6 @@ def ziskej_posledni_pocet():
             .limit(1)
             .execute()
         )
-        # Výsledek je seznam slovníků: odpoved.data = [{'sledujici': 758}]
         if odpoved.data and len(odpoved.data) > 0:
             return int(odpoved.data[0]["sledujici"])
     except Exception as e:
@@ -32,8 +30,10 @@ def track_followers():
     url = "https://facebook.com"
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Accept-Language": "cs-CZ,cs;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
 
     aktualni_sledujici = None
@@ -42,16 +42,16 @@ def track_followers():
         response = requests.get(url, headers=headers, timeout=15)
         html_content = response.text
 
+        # 1. Pokus: Hledání klíče follower_count v JSON strukturách Facebooku
         follower_meta = re.search(
             r'"follower_count":\s*(\d+)', html_content
         ) or re.search(r'"subscriber_count":\s*(\d+)', html_content)
 
         if follower_meta:
             aktualni_sledujici = int(follower_meta.group(1))
-            print(
-                f"DEBUG: Úspěšně nalezen počet SLEDUJÍCÍCH z metadat: {aktualni_sledujici}"
-            )
+            print(f"DEBUG: Staženo z metadat: {aktualni_sledujici}")
         else:
+            # 2. Pokus: Hledání čistého textu "sledujících" přímo v HTML obsahu
             text_match = re.search(
                 r'([\d\s\xa0]+)\s*(?:sledujících|sleduje|followers)',
                 html_content,
@@ -63,15 +63,14 @@ def track_followers():
                 )
                 if clean_num:
                     aktualni_sledujici = int(clean_num)
-                    print(
-                        f"DEBUG: Nalezeno přes záložní text: {aktualni_sledujici}"
-                    )
+                    print(f"DEBUG: Staženo z textu stránky: {aktualni_sledujici}")
 
-        if aktualni_sledujici is None or aktualni_sledujici == 0:
+        # ŽÁDNÁ POJISTKA - pokud je prázdno, ukončíme program bez zápisu
+        if aktualni_sledujici is None:
             print(
-                "DEBUG: Facebook omezil přístup, aplikuji aktuální základnu 758 sledujících."
+                "CHYBA: Facebook zablokoval přístup nebo změnil kód stránky. Číslo nebylo nalezeno. Zápis do Supabase se ruší."
             )
-            aktualni_sledujici = 758
+            return
 
         dnesni_datum = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
@@ -95,7 +94,7 @@ def track_followers():
 
         print(f"Odesílám data do Supabase: {novy_radek}")
         supabase.table("facebook_tracker").insert(novy_radek).execute()
-        print("Úspěch! Správný počet sledujících byl zapsán.")
+        print("Úspěch! Stažené číslo z Facebooku bylo zapsáno do Supabase.")
 
     except Exception as e:
         print(f"Chyba při běhu programu: {e}")
