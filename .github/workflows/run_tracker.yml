@@ -1,9 +1,10 @@
-name: Každominutový Sledovač do Supabase
+name: Automatický Sledovač Změn do Supabase
 
 on:
   schedule:
-    - cron: '* * * * *'
-  workflow_dispatch:
+    # Automatically triggers every 15 minutes, 24/7
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Keeps manual execution open if you ever want to trigger it from the UI
 
 jobs:
   scrape-followers:
