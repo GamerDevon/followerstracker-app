@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: Keep the 30-minute cloud check completely automated
+  # JOB 1: Automated cloud checks remain functional
   track-followers:
     runs-on: ubuntu-latest
     steps:
@@ -26,9 +26,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        # Runs headlessly without GUI initialization error on server backend
         run: python tracker.py
 
-  # JOB 2: Build a Windows Executable dynamically in the cloud
+  # JOB 2: Build the clean standalone Visual Windows App
   build-exe:
     runs-on: windows-latest
     steps:
@@ -43,11 +44,12 @@ jobs:
       - name: Nainstalovat závislosti pro kompilaci
         run: pip install requests supabase pyinstaller
 
-      - name: Zkompilovat kód do EXE
-        run: pyinstaller --onefile tracker.py
+      - name: Zkompilovat kód do VIZUÁLNÍHO EXE
+        # The --noconsole flag eliminates the black terminal pop-up entirely!
+        run: pyinstaller --onefile --noconsole tracker.py
 
       - name: Nahrát hotový soubor na GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: Windows-Tracker-Program
+          name: Windows-Visual-Tracker
           path: dist/tracker.exe
