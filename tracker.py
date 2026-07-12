@@ -9,13 +9,19 @@ RED = "\033[91m"
 GRAY = "\033[90m"
 RESET = "\033[0m"
 
-# Environment Variables fetched from GitHub Secrets
+# SAFE: Fetching variables from GitHub Environment instead of hardcoding them
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 
 # Target page canonical identifier (Hand-made MisKho)
 FACEBOOK_PAGE = "https://www.facebook.com/100064601383155"
+
+# Safety check to stop execution if secrets weren't added to GitHub settings
+if not SUPABASE_URL or not SUPABASE_KEY or not APIFY_TOKEN:
+    print("ERROR: One or more secret tokens are missing from environment variables!")
+    print("Make sure you added SUPABASE_URL, SUPABASE_KEY, and APIFY_TOKEN to your GitHub Repository Secrets.")
+    exit(1)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -37,13 +43,8 @@ def get_last_count():
 
 
 def get_count_from_apify():
-    if not APIFY_TOKEN:
-        print("ERROR: APIFY_TOKEN environment variable is missing.")
-        return None
-
     run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
     
-    # Exact required input schema configuration for the Apify Actor 
     payload = {
         "startUrls": [{"url": FACEBOOK_PAGE}],
         "proxyConfiguration": {
@@ -61,12 +62,10 @@ def get_count_from_apify():
             if data and len(data) > 0:
                 first_item = data[0]
                 
-                # Check for explicit failure conditions reported within the worker thread
                 if "error" in first_item or "errorDescription" in first_item:
                     print(f"DEBUG: Internal scraper error caught: {first_item.get('errorDescription')}")
                     return None
 
-                # Dynamic fallback tracking for returned fields
                 followers = (
                     first_item.get("followersCount") or 
                     first_item.get("followers") or 
@@ -77,11 +76,11 @@ def get_count_from_apify():
                 if followers is not None:
                     return int(followers)
                 else:
-                    print(f"DEBUG: Data payload extracted successfully, but counter keys are missing. Keys: {list(first_item.keys())}")
+                    print(f"DEBUG: Counter keys missing. Keys: {list(first_item.keys())}")
             else:
-                print("DEBUG: Apify returned a completely empty dataset collection.")
+                print("DEBUG: Apify returned an empty dataset collection.")
         else:
-            print(f"DEBUG: Apify API transactional code issue. Status: {res.status_code}, Body: {res.text}")
+            print(f"DEBUG: Apify API transactional issue. Status: {res.status_code}")
     except Exception as e:
         print(f"DEBUG: Connection error during Apify API transaction: {e}")
     return None
@@ -97,14 +96,12 @@ def track_followers():
 
     last_count = get_last_count()
 
-    # Dynamic check: If the count hasn't changed, stop immediately. Gray output in log.
     if last_count is not None and current_followers == last_count:
         print(f"{GRAY}No change detected. Followers remain at {current_followers}. Database update skipped.{RESET}")
         return
 
     current_date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-    # Format output logs with clean color schemes depending on the drift direction
     if last_count is None:
         change_text = "První měření"
         log_display = f"{GRAY}{change_text}{RESET}"
