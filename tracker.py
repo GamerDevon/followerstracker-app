@@ -1,4 +1,3 @@
-import csv
 import datetime
 import os
 import re
@@ -7,20 +6,30 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from supabase import Client, create_client
+
+# Načtení přihlašovacích údajů k Supabase z tajných proměnných GitHubu
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def ziskej_posledni_pocet():
-    """Přečte poslední zaznamenaný počet sledujících z CSV souboru."""
-    if not os.path.isfile("facebook_followers.csv"):
-        return None
+    """Vytáhne z databáze poslední uložený počet sledujících."""
     try:
-        with open("facebook_followers.csv", mode="r", encoding="utf-8") as soubor:
-            radky = list(csv.reader(soubor))
-            if len(radky) > 1:  # Pokud tabulka obsahuje více než jen hlavičku
-                # Vrátí číslo z posledního řádku (druhý sloupec)
-                return int(radky[-1][1])
-    except Exception:
-        return None
+        # Seřadí data od nejnovějšího podle ID a vezme pouze 1 řádek
+        odpoved = (
+            supabase.table("facebook_tracker")
+            .select("sledujici")
+            .order("id", descending=True)
+            .limit(1)
+            .execute()
+        )
+        if odpoved.data:
+            return int(odpoved.data[0]["sledujici"])
+    except Exception as e:
+        print(f"Nepodařilo se načíst předchozí data: {e}")
     return None
 
 
@@ -42,7 +51,6 @@ def track_followers():
     try:
         driver.get(profile_url)
 
-        # Čekání na prvek s textem o sledujících
         wait = WebDriverWait(driver, 15)
         element = wait.until(
             EC.presence_of_element_located(
@@ -54,19 +62,16 @@ def track_followers():
         )
 
         full_text = element.text
-
-        # Vyčištění textu na čisté číslo
         cisla = re.findall(r"\d+", full_text.replace(" ", "").replace(",", ""))
         aktualni_sledujici = int(cisla[0]) if cisla else None
 
         if aktualni_sledujici is None:
-            print("Chyba: Nepodařilo se napárovat číslo sledujících.")
+            print("Chyba: Číslo sledujících nebylo nalezeno.")
             return
 
-        # Formátování data podle vašeho přání (např. 22.07.2026)
         dnesni_datum = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-        # Výpočet rozdílu oproti minulému záznamu
+        # Výpočet změny oproti databázi
         posledni_pocet = ziskej_posledni_pocet()
         if posledni_pocet is None:
             rozdil_text = "První měření"
@@ -79,21 +84,17 @@ def track_followers():
             else:
                 rozdil_text = "Bez změny"
 
-        # Zápis do tabulky
-        soubor_existuje = os.path.isfile("facebook_followers.csv")
-        with open(
-            "facebook_followers.csv", mode="a", newline="", encoding="utf-8"
-        ) as file:
-            writer = csv.writer(file)
-            if not soubor_existue == False:
-                # Česká hlavička tabulky
-                writer.writerow(["Datum", "Sledující", "Změna"])
+        # Příprava dat pro odeslání do Supabase
+        novy_radek = {
+            "datum": dnesni_datum,
+            "sledujici": aktualni_sledujici,
+            "zmena": rozdil_text,
+        }
 
-            # Zápis řádku: např. [22.07.2026 14:05, 732, +2 (Nárůst)]
-            writer.writerow([dnesni_datum, aktualni_sledujici, rozdil_text])
-
+        # Zápis do Supabase tabulky
+        supabase.table("facebook_tracker").insert(novy_radek).execute()
         print(
-            f"Úspěch! Den: {dnesni_datum} Sledující: {aktualni_sledujici} | {rozdil_text}"
+            f"Úspěšně uloženo do Supabase! {dnesni_datum} | Sledující: {aktualni_sledujici} | {rozdil_text}"
         )
 
     except Exception as e:
