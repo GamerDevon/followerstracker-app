@@ -2,10 +2,8 @@ name: Automatický Sledovač Změn do Supabase
 
 on:
   schedule:
-    # This CRON expression tells GitHub to run this script automatically every 30 minutes, 24/7.
-    # (30 minutes is the sweet spot to save free API credits while keeping data fresh!)
     - cron: '*/30 * * * *'
-  workflow_dispatch: # This allows you to still click "Run workflow" manually whenever you want to test it.
+  workflow_dispatch:
 
 jobs:
   scrape-followers:
