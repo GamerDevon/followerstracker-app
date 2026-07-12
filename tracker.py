@@ -14,8 +14,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 
-# Target settings
-# Using the clean profile ID string to eliminate regional /p/ redirection walls completely
+# Target page canonical identifier (Hand-made MisKho)
 FACEBOOK_PAGE = "https://www.facebook.com/100064601383155"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -42,12 +41,11 @@ def get_count_from_apify():
         print("ERROR: APIFY_TOKEN environment variable is missing.")
         return None
 
-    # Using the specialized, highly-stable apify/facebook-pages-scraper endpoint
     run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
     
-    # Passing the inputs using the correct 'pageUrls' schema property along with fallback residential proxies
+    # Exact required input schema configuration for the Apify Actor 
     payload = {
-        "pageUrls": [FACEBOOK_PAGE],
+        "startUrls": [{"url": FACEBOOK_PAGE}],
         "proxyConfiguration": {
             "useApifyProxy": True,
             "apifyProxyGroups": ["RESIDENTIAL"]
@@ -55,7 +53,7 @@ def get_count_from_apify():
     }
 
     try:
-        print("Contacting Apify cloud platform using pageUrls schema configuration...")
+        print("Contacting Apify cloud platform using structured startUrls payload...")
         res = requests.post(run_url, json=payload, timeout=60)
         
         if res.status_code in [200, 201]:
@@ -68,7 +66,7 @@ def get_count_from_apify():
                     print(f"DEBUG: Internal scraper error caught: {first_item.get('errorDescription')}")
                     return None
 
-                # Fallback schema checking block
+                # Dynamic fallback tracking for returned fields
                 followers = (
                     first_item.get("followersCount") or 
                     first_item.get("followers") or 
@@ -81,7 +79,7 @@ def get_count_from_apify():
                 else:
                     print(f"DEBUG: Data payload extracted successfully, but counter keys are missing. Keys: {list(first_item.keys())}")
             else:
-                print("DEBUG: Apify returned an completely empty dataset collection.")
+                print("DEBUG: Apify returned a completely empty dataset collection.")
         else:
             print(f"DEBUG: Apify API transactional code issue. Status: {res.status_code}, Body: {res.text}")
     except Exception as e:
