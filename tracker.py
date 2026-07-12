@@ -1,6 +1,5 @@
 import datetime
 import os
-import re
 import requests
 from supabase import Client, create_client
 
@@ -10,8 +9,14 @@ RED = "\033[91m"
 GRAY = "\033[90m"
 RESET = "\033[0m"
 
+# Environment Variables
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
+
+# Target settings
+# TODO: Replace this with your exact target Facebook Page URL or username slug
+FACEBOOK_PAGE = "https://www.facebook.com/YOUR_FACEBOOK_PAGE_SLUG_OR_URL"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -32,69 +37,63 @@ def get_last_count():
     return None
 
 
-def get_count_from_fb():
-    # TODO: Replace with your specific target Facebook page URL if needed
-    url = "https://facebook.com" 
+def get_count_from_apify():
+    """Triggers Apify's official free-tier Facebook Scraper to fetch live counts."""
+    if not APIFY_TOKEN:
+        print("ERROR: APIFY_TOKEN environment variable is missing.")
+        return None
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://google.com)",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
+    # Calling Apify's specialized facebook-pages-scraper Actor
+    run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+    
+    payload = {
+        "startUrls": [{"url": FACEBOOK_PAGE}],
+        "maxResults": 1,
+        "scrapeAbout": True
     }
 
     try:
-        res = requests.get(url, headers=headers, timeout=15)
-        html_content = res.text
-
-        meta_match = re.search(
-            r'<meta\s+name="description"\s+content="([^"]*)"',
-            html_content,
-            re.IGNORECASE,
-        )
-        if meta_match:
-            desc_text = meta_match.group(1)
-            print(f"DEBUG: Found indexing meta tag text: '{desc_text}'")
-
-            match = re.search(
-                r"([\d\s,]+)\s*(?:followers|sledujících|sleduje|likes)",
-                desc_text,
-                re.IGNORECASE,
-            )
-            if match:
-                clean_num = "".join(c for c in match.group(1) if c.isdigit())
-                if clean_num:
-                    return int(clean_num)
-
-        json_match = re.search(
-            r'"follower_count":\s*(\d+)', html_content
-        ) or re.search(r'"subscriber_count":\s*(\d+)', html_content)
-        if json_match:
-            return int(json_match.group(1))
-
+        print("Contacting Apify cloud platform to bypass Facebook firewalls...")
+        res = requests.post(run_url, json=payload, timeout=60)
+        
+        if res.status_code == 200 or res.status_code == 201:
+            data = res.json()
+            if data and len(data) > 0:
+                # Extract the follower count safely from structural JSON format
+                followers = data[0].get("followersCount")
+                if followers is not None:
+                    return int(followers)
+                else:
+                    print("DEBUG: API structural layout found, but 'followersCount' is missing.")
+            else:
+                print("DEBUG: Apify returned an empty dataset payload.")
+        else:
+            print(f"DEBUG: Apify API error. Status: {res.status_code}, Body: {res.text}")
+            
     except Exception as e:
-        print(f"DEBUG: Connection error during fetch phase: {e}")
+        print(f"DEBUG: Connection error during Apify API transaction: {e}")
 
     return None
 
 
 def track_followers():
-    print("Initiating direct extraction from Facebook page...")
-    current_followers = get_count_from_fb()
+    print("Initiating cloud extraction from Facebook page...")
+    current_followers = get_count_from_apify()
 
     if current_followers is None or current_followers == 0:
-        print("ERROR: Facebook blocked retrieval or layout structure shifted. Aborting.")
+        print("ERROR: Cloud retrieval failed or execution credit exhausted. Aborting.")
         return
 
     last_count = get_last_count()
 
-    # Dynamic check: Abort early if the data hasn't drifted
+    # Dynamic check: Abort early if data has not changed
     if last_count is not None and current_followers == last_count:
         print(f"{GRAY}No change detected. Followers remain at {current_followers}. Database update skipped.{RESET}")
         return
 
     current_date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-    # Format the strings with ANSI color blocks for the GitHub Actions log terminal
+    # Format output logs with clean color schemes
     if last_count is None:
         change_text = "První měření"
         log_display = f"{GRAY}{change_text}{RESET}"
@@ -110,7 +109,7 @@ def track_followers():
     new_row = {
         "datum": current_date,
         "sledujici": current_followers,
-        "zmena": change_text,  # Clean string saved to database (no raw ANSI code junk)
+        "zmena": change_text,  # Clean string saved to your dataset table
     }
 
     try:
