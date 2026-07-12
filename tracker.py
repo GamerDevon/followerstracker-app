@@ -15,8 +15,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
 
 # Target settings
-# TODO: Replace this with your exact target Facebook Page URL or username slug
-FACEBOOK_PAGE = "https://www.facebook.com/YOUR_FACEBOOK_PAGE_SLUG_OR_URL"
+# Using the clean profile ID string to eliminate regional /p/ redirection walls completely
+FACEBOOK_PAGE = "https://www.facebook.com/100064601383155"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -42,32 +42,48 @@ def get_count_from_apify():
         print("ERROR: APIFY_TOKEN environment variable is missing.")
         return None
 
+    # Using the specialized, highly-stable apify/facebook-pages-scraper endpoint
     run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
     
+    # Passing the inputs using the correct 'pageUrls' schema property along with fallback residential proxies
     payload = {
-        "startUrls": [{"url": FACEBOOK_PAGE}],
-        "maxResults": 1,
-        "scrapeAbout": True
+        "pageUrls": [FACEBOOK_PAGE],
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+            "apifyProxyGroups": ["RESIDENTIAL"]
+        }
     }
 
     try:
-        print("Contacting Apify cloud platform to bypass Facebook firewalls...")
+        print("Contacting Apify cloud platform using pageUrls schema configuration...")
         res = requests.post(run_url, json=payload, timeout=60)
         
         if res.status_code in [200, 201]:
             data = res.json()
             if data and len(data) > 0:
-                # Check both common structural property variations from Apify
-                followers = data[0].get("followersCount") or data[0].get("followers")
+                first_item = data[0]
+                
+                # Check for explicit failure conditions reported within the worker thread
+                if "error" in first_item or "errorDescription" in first_item:
+                    print(f"DEBUG: Internal scraper error caught: {first_item.get('errorDescription')}")
+                    return None
+
+                # Fallback schema checking block
+                followers = (
+                    first_item.get("followersCount") or 
+                    first_item.get("followers") or 
+                    first_item.get("likesCount") or 
+                    first_item.get("likes")
+                )
                 
                 if followers is not None:
                     return int(followers)
                 else:
-                    print(f"DEBUG: Found data layout keys, but followers missing. Keys available: {list(data[0].keys())}")
+                    print(f"DEBUG: Data payload extracted successfully, but counter keys are missing. Keys: {list(first_item.keys())}")
             else:
-                print("DEBUG: Apify returned an empty dataset payload.")
+                print("DEBUG: Apify returned an completely empty dataset collection.")
         else:
-            print(f"DEBUG: Apify issue. Status: {res.status_code}, Body: {res.text}")
+            print(f"DEBUG: Apify API transactional code issue. Status: {res.status_code}, Body: {res.text}")
     except Exception as e:
         print(f"DEBUG: Connection error during Apify API transaction: {e}")
     return None
