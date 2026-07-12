@@ -9,7 +9,7 @@ RED = "\033[91m"
 GRAY = "\033[90m"
 RESET = "\033[0m"
 
-# Environment Variables
+# Environment Variables fetched from GitHub Secrets
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN")
@@ -38,12 +38,10 @@ def get_last_count():
 
 
 def get_count_from_apify():
-    """Triggers Apify's official free-tier Facebook Scraper to fetch live counts."""
     if not APIFY_TOKEN:
         print("ERROR: APIFY_TOKEN environment variable is missing.")
         return None
 
-    # Calling Apify's specialized facebook-pages-scraper Actor
     run_url = f"https://api.apify.com/v2/acts/apify~facebook-pages-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
     
     payload = {
@@ -56,23 +54,22 @@ def get_count_from_apify():
         print("Contacting Apify cloud platform to bypass Facebook firewalls...")
         res = requests.post(run_url, json=payload, timeout=60)
         
-        if res.status_code == 200 or res.status_code == 201:
+        if res.status_code in [200, 201]:
             data = res.json()
             if data and len(data) > 0:
-                # Extract the follower count safely from structural JSON format
-                followers = data[0].get("followersCount")
+                # Check both common structural property variations from Apify
+                followers = data[0].get("followersCount") or data[0].get("followers")
+                
                 if followers is not None:
                     return int(followers)
                 else:
-                    print("DEBUG: API structural layout found, but 'followersCount' is missing.")
+                    print(f"DEBUG: Found data layout keys, but followers missing. Keys available: {list(data[0].keys())}")
             else:
                 print("DEBUG: Apify returned an empty dataset payload.")
         else:
-            print(f"DEBUG: Apify API error. Status: {res.status_code}, Body: {res.text}")
-            
+            print(f"DEBUG: Apify issue. Status: {res.status_code}, Body: {res.text}")
     except Exception as e:
         print(f"DEBUG: Connection error during Apify API transaction: {e}")
-
     return None
 
 
@@ -86,14 +83,14 @@ def track_followers():
 
     last_count = get_last_count()
 
-    # Dynamic check: Abort early if data has not changed
+    # Dynamic check: If the count hasn't changed, stop immediately. Gray output in log.
     if last_count is not None and current_followers == last_count:
         print(f"{GRAY}No change detected. Followers remain at {current_followers}. Database update skipped.{RESET}")
         return
 
     current_date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-    # Format output logs with clean color schemes
+    # Format output logs with clean color schemes depending on the drift direction
     if last_count is None:
         change_text = "První měření"
         log_display = f"{GRAY}{change_text}{RESET}"
@@ -109,7 +106,7 @@ def track_followers():
     new_row = {
         "datum": current_date,
         "sledujici": current_followers,
-        "zmena": change_text,  # Clean string saved to your dataset table
+        "zmena": change_text,
     }
 
     try:
